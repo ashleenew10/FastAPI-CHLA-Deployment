@@ -1,8 +1,5 @@
-# prediction_backend_chla.py
-
 import pandas as pd
 import numpy as np
-import pickle
 import os
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -16,17 +13,18 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "new_best_no_show_model.pkl")
 ENCODER_PATH = os.path.join(BASE_DIR, "NEW_no_show_encoder.pkl")
 
-with open(MODEL_PATH, "rb") as file:
-    model = joblib.load(file)
+with open(MODEL_PATH, "rb") as model_file:
+    model = joblib.load(model_file)
 
-with open(ENCODER_PATH, "rb") as file:
-    encoder_dict = joblib.load(file)
+with open(ENCODER_PATH, "rb") as encoder_file:
+    encoder_dict = joblib.load(encoder_file)
 
-# --- Expected categorical features ---
-category_col = ['ZIPCODE', 'CLINIC', 'IS_REPEAT', 'APPT_TYPE_STANDARDIZE', 'ETHNICITY_STANDARDIZE', 'RACE_STANDARDIZE']
+# --- Categorical columns and model input order ---
+category_col = ['ZIPCODE', 'CLINIC', 'IS_REPEAT', 'APPT_TYPE_STANDARDIZE', 
+                'ETHNICITY_STANDARDIZE', 'RACE_STANDARDIZE']
 expected_features = model.feature_names_in_
 
-# --- Define the input format ---
+# --- Define the input schema ---
 class AppointmentInput(BaseModel):
     ZIPCODE: str
     CLINIC: str
@@ -37,26 +35,28 @@ class AppointmentInput(BaseModel):
     AGE: float
     HOUR_OF_DAY: int
 
-# --- Preprocess input ---
+# --- Preprocessing function ---
 def preprocess_input(data):
     df = pd.DataFrame([data])
 
-    # Encode categorical variables
+    # Standardize text inputs for consistency
+    for col in category_col:
+        if col in df.columns and pd.api.types.is_string_dtype(df[col]):
+            df[col] = df[col].str.title()
+
+    # Encode categorical features using pre-fitted encoders
     for col in category_col:
         if col in df.columns:
             df[col] = df[col].apply(lambda x: 
                 encoder_dict[col].transform([x])[0] if x in encoder_dict[col].classes_ 
                 else encoder_dict[col].transform(['Unknown'])[0])
 
-    # Fill missing columns
+    # Add missing columns with default value
     missing_cols = set(expected_features) - set(df.columns)
     for col in missing_cols:
         df[col] = 0
 
-    # Reorder columns
-    df = df[expected_features]
-
-    return df
+    return df[expected_features]
 
 # --- Prediction endpoint ---
 @app.post("/predict/")
